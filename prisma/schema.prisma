@@ -1,0 +1,108 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum TxType {
+  INCOME
+  EXPENSE
+}
+
+model User {
+  id        String       @id @default(cuid())
+  name      String?
+  email     String       @unique
+  password  String       // hash
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  memberships Membership[]
+}
+
+model Tenant {
+  id        String       @id @default(cuid())
+  name      String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  memberships Membership[]
+  accounts    Account[]
+  categories  Category[]
+  txs         Transaction[]
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+  role      Role     @default(MEMBER)
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  txs    Transaction[]
+
+  @@index([tenantId])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  type      TxType   // categoria de INCOME ou EXPENSE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  txs    Transaction[]
+
+  @@unique([tenantId, name, type])
+  @@index([tenantId])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  tenantId    String
+  accountId   String
+  categoryId  String?
+  type        TxType
+  amountCents Int      // evita problemas de float
+  description String?
+  occurredAt  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, occurredAt])
+  @@index([tenantId, type])
+  @@index([accountId])
+  @@index([categoryId])
+}
