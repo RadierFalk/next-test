@@ -5,49 +5,122 @@ import bcrypt from "bcryptjs";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, email, password } = body ?? {};
+    const { name, email, password, tenantName, tenantCode } = body ?? {};
 
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !tenantName || !tenantCode) {
       return NextResponse.json(
-        { error: "name, email e password são obrigatórios" },
+        {
+          error:
+            "name, email, password, tenantName e tenantCode são obrigatórios",
+        },
         { status: 400 }
       );
     }
 
-    const emailNormalizado = String(email).trim().toLowerCase();
+    const normalizedName = String(name).trim();
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedTenantName = String(tenantName).trim();
+    const normalizedTenantCode = String(tenantCode).trim().toLowerCase();
 
-    const usuarioExistente = await prisma.user.findUnique({
-      where: { email: emailNormalizado },
+    const existingUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
     });
 
-    if (usuarioExistente) {
+    if (existingUser) {
       return NextResponse.json(
         { error: "Já existe um usuário com esse email" },
         { status: 409 }
       );
     }
 
-    const senhaHash = await bcrypt.hash(password, 10);
+    const existingTenant = await prisma.tenant.findUnique({
+      where: { code: normalizedTenantCode },
+    });
 
-    const user = await prisma.user.create({
-      data: {
-        name: String(name).trim(),
-        email: emailNormalizado,
-        password: senhaHash,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        createdAt: true,
-      },
+    if (
+      existingTenant &&
+      existingTenant.name.trim().toLowerCase() !==
+        normalizedTenantName.toLowerCase()
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Esse tenantCode já pertence a outra empresa com nome diferente",
+        },
+        { status: 409 }
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: normalizedName,
+          email: normalizedEmail,
+          password: passwordHash,
+        },
+      });
+
+      if (!existingTenant) {
+        const tenant = await tx.tenant.create({
+          data: {
+            name: normalizedTenantName,
+            code: normalizedTenantCode,
+          },
+        });
+
+        const membership = await tx.membership.create({
+          data: {
+            userId: user.id,
+            tenantId: tenant.id,
+            role: "OWNER",
+          },
+        });
+
+        return {
+          user,
+          tenant,
+          membership,
+        };
+      }
+
+      const membership = await tx.membership.create({
+        data: {
+          userId: user.id,
+          tenantId: existingTenant.id,
+          role: "PENDING",
+        },
+      });
+
+      return {
+        user,
+        tenant: existingTenant,
+        membership,
+      };
     });
 
     return NextResponse.json(
-      { message: "Usuário cadastrado com sucesso", user },
+      {
+        message: "Usuário cadastrado com sucesso",
+        user: {
+          id: result.user.id,
+          name: result.user.name,
+          email: result.user.email,
+        },
+        tenant: {
+          id: result.tenant.id,
+          name: result.tenant.name,
+          code: result.tenant.code,
+        },
+        membership: {
+          id: result.membership.id,
+          role: result.membership.role,
+        },
+      },
       { status: 201 }
     );
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro em /api/auth/register:", error);
 
     return NextResponse.json(
